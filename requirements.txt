@@ -14,6 +14,7 @@ pydantic==2.13.4
 pydantic-settings==2.14.1
 pymupdf4llm==1.27.2.3
 python-multipart==0.0.29
+qdrant-client==1.14.3
 sqlalchemy[asyncio]==2.0.41
 tiktoken==0.13.0
 uvicorn==0.49.0

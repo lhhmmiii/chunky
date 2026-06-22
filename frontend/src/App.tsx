@@ -5,6 +5,7 @@ import ChunkViewer from './components/viewer/ChunkViewer'
 import SettingsModal from './components/modals/SettingsModal'
 import ProgressModal from './components/modals/ProgressModal'
 import ConfirmDialog from './components/modals/ConfirmDialog'
+import VectorStoreModal from './components/modals/VectorStoreModal'
 import Toast from './components/Toast'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useDocument } from './hooks/useDocument'
@@ -17,6 +18,7 @@ import {
   fetchDocumentMetadata,
   mdSourceFromFilename,
 } from './services/apiService'
+import { indexChunks } from './services/vectorStoreApi'
 import {
   TOAST_DURATION_ERROR_MS,
   TOAST_DURATION_SUCCESS_MS,
@@ -222,6 +224,29 @@ export default function App() {
   const rightPanelRef = useRef<HTMLDivElement>(null)
   /** Pending document switch while a conversion/chunking is in progress. */
   const [pendingDoc, setPendingDoc] = useState<string | null>(null)
+
+  // ── Vector store state ────────────────────────────────────────────
+  const [indexing, setIndexing] = useState(false)
+  const [vsModalOpen, setVsModalOpen] = useState(false)
+  const [lastIndexedCollection, setLastIndexedCollection] = useState<string | null>(null)
+
+  const handleIndexChunks = useCallback(async () => {
+    if (!selectedDoc || !selectedChunks || !chunks?.length) return
+    setIndexing(true)
+    try {
+      const result = await indexChunks(selectedDoc, selectedChunks)
+      setLastIndexedCollection(result.collection)
+      showToast(
+        `\u26a1 Indexed ${result.indexed_count} chunks into “${result.collection}”`,
+        'success',
+      )
+      setVsModalOpen(true)
+    } catch (err) {
+      showToast(`Embed & Index failed: ${err}`, 'error')
+    } finally {
+      setIndexing(false)
+    }
+  }, [selectedDoc, selectedChunks, chunks, showToast])
 
   // Reset to default layout when the selected doc has no markdown.
   useEffect(() => {
@@ -816,6 +841,10 @@ export default function App() {
                       scrollSyncEnabled={scrollSync}
                       onEnrichSuccess={toastCallbacks.onSuccess}
                       onEnrichError={toastCallbacks.onError}
+                      vectorStoreEnabled={!!selectedChunks}
+                      onIndexChunks={handleIndexChunks}
+                      indexing={indexing}
+                      onOpenSearch={() => setVsModalOpen(true)}
                     />
                   )}
                 </div>
@@ -829,6 +858,11 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           onSave={handleApplySettings}
           current={settings}
+        />
+        <VectorStoreModal
+          isOpen={vsModalOpen}
+          defaultCollection={lastIndexedCollection}
+          onClose={() => setVsModalOpen(false)}
         />
       </div>
     </div>

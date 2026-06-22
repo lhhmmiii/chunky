@@ -201,9 +201,39 @@ class Settings(BaseSettings):
     """Default ``chunk_overlap`` advertised by the chunking API when the client
     omits the field."""
 
-    # ── App ────────────────────────────────────────────────────
+    # ── App ────────────────────────────────────────────────────────────
     APP_VERSION: str = "0.6.0"
 
+    # ── Vector Store ───────────────────────────────────────────────────
+    VECTOR_STORE_ENABLED: bool = True
+    """Enable the vector store feature (Embed & Index).  Set to false to
+    disable the /api/vector-store routes and hide the UI button without
+    removing any code."""
+
+    QDRANT_URL: str = "http://localhost:6333"
+    """Base URL of the Qdrant instance.  Overrideable via QDRANT_URL."""
+
+    QDRANT_API_KEY: str | None = None
+    """Optional Qdrant API key for authenticated cloud deployments."""
+
+    VECTOR_STORE_EMBEDDING_MODEL: str = "minishlab/potion-base-8M"
+    """model2vec model ID used for local embeddings.  The model is downloaded
+    on first use and cached by the HuggingFace hub."""
+
+    VECTOR_STORE_EMBEDDING_BATCH_SIZE: int = 64
+    """Number of texts to embed per model2vec batch call."""
+
+    VECTOR_STORE_COLLECTION_PREFIX: str = "chunky"
+    """Optional prefix prepended to every Qdrant collection name so Chunky
+    collections stay identifiable in a shared Qdrant instance."""
+
+    # ── Embedder ───────────────────────────────────────────────────
+    VECTOR_STORE_EMBEDDING_MODEL: str = "AITeamVN/Vietnamese_Embedding"
+    """model2vec model ID used for local embeddings.  The model is downloaded
+    on first use and cached by the HuggingFace hub."""
+    
+    VECTOR_STORE_EMBEDDING_BATCH_SIZE: int = 64
+    """Number of texts to embed per model2vec batch call."""
 
 @lru_cache
 def get_settings() -> Settings:

@@ -206,3 +206,37 @@ export interface EnrichOp {
   total: number
   errorMessage?: string
 }
+
+// ---------------------------------------------------------------------------
+// Vector Store — shapes returned / sent by /api/vector-store endpoints
+// ---------------------------------------------------------------------------
+
+export interface VectorStoreCollection {
+  name: string
+  points_count: number
+  vector_size: number
+}
+
+export interface VectorSearchHit {
+  score: number
+  chunk_index: number
+  content: string
+  cleaned_chunk: string
+  title: string
+  context: string
+  summary: string
+  keywords: string[]
+  questions: string[]
+  parent_content: string
+  metadata: Record<string, unknown>
+  filename: string
+  collection: string
+}
+
+export interface IndexResult {
+  success: boolean
+  collection: string
+  indexed_count: number
+  vector_dim: number
+  message: string
+}
