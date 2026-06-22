@@ -169,6 +169,8 @@ def _normalise_chunk(raw: dict[str, Any]) -> dict[str, Any]:
         "metadata": _as_dict(raw.get("metadata", {})),
         "start": _as_int(raw.get("start", 0)),
         "end": _as_int(raw.get("end", 0)),
+        "parent_id": raw.get("parent_id"),  # None for non-parent-child chunks
+        "parent_content": _as_str(raw.get("parent_content", "")),
     }
 
 
@@ -222,6 +224,7 @@ class ChunkStorageService:
             "chunk_size": request.chunk_size,
             "chunk_overlap": request.chunk_overlap,
             "enable_markdown_sizing": request.enable_markdown_sizing,
+            "parent_chunk_size": request.parent_chunk_size,
             "saved_at": datetime.now(tz=timezone.utc).isoformat(),
             "total_chunks": len(normalised_chunks),
             "chunks": normalised_chunks,
@@ -305,3 +308,262 @@ class ChunkStorageService:
             raise HTTPException(status_code=500, detail=f"Saved chunk file is corrupt: {exc}")
         except KeyError as exc:
             raise HTTPException(status_code=500, detail=f"Saved chunk file is missing field: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Database-backed storage service
+# ---------------------------------------------------------------------------
+
+
+import asyncio
+import logging as _logging
+
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.db import get_session_factory
+from backend.models.chunk_models import ChunkRecord, ChunkSetRecord
+
+_db_logger = _logging.getLogger(__name__)
+
+
+def _chunk_item_to_record(
+    chunk: dict[str, Any],
+    chunk_set_id: int,
+) -> ChunkRecord:
+    """Convert a normalised chunk dict to a :class:`ChunkRecord` ORM row."""
+    return ChunkRecord(
+        chunk_set_id=chunk_set_id,
+        index=_as_int(chunk.get("index", 0)),
+        content=_as_str(chunk.get("content", "")),
+        cleaned_chunk=_as_str(chunk.get("cleaned_chunk", "")),
+        title=_as_str(chunk.get("title", "")),
+        context=_as_str(chunk.get("context", "")),
+        summary=_as_str(chunk.get("summary", "")),
+        keywords=_as_str_list(chunk.get("keywords", [])),
+        questions=_as_str_list(chunk.get("questions", [])),
+        metadata_=_as_dict(chunk.get("metadata", {})),
+        start=_as_int(chunk.get("start", 0)),
+        end=_as_int(chunk.get("end", 0)),
+        parent_id=chunk.get("parent_id"),
+        parent_content=_as_str(chunk.get("parent_content", "")),
+    )
+
+
+def _record_to_chunk_dict(record: ChunkRecord) -> dict[str, Any]:
+    """Convert a :class:`ChunkRecord` ORM row to a normalised chunk dict."""
+    return {
+        "index": record.index,
+        "content": record.content,
+        "cleaned_chunk": record.cleaned_chunk,
+        "title": record.title,
+        "context": record.context,
+        "summary": record.summary,
+        "keywords": record.keywords or [],
+        "questions": record.questions or [],
+        "metadata": record.metadata_ or {},
+        "start": record.start,
+        "end": record.end,
+        "parent_id": record.parent_id,
+        "parent_content": record.parent_content or "",
+    }
+
+
+class DatabaseChunkStorageService:
+    """Saves and loads enriched chunk sets via PostgreSQL (async SQLAlchemy).
+
+    The DB schema mirrors the local-file storage semantics:
+    - Re-saving with the same configuration (filename + md_source + library +
+      algorithm + chunk_size + overlap) **replaces** the existing rows.
+    - :meth:`list_versions` returns all configurations for a document, ordered
+      newest first by ``saved_at``.
+    """
+
+    # ------------------------------------------------------------------
+    # Async internals — called from async router handlers
+    # ------------------------------------------------------------------
+
+    async def _save_chunks_async(self, request: SaveChunksRequest) -> SaveChunksResponse:
+        stem = _safe_stem(request.filename)
+        md_source = md_source_token(request.md_filename, stem)
+        normalised = [_normalise_chunk(c) for c in request.chunks]
+
+        async with get_session_factory()() as session:
+            # Upsert: delete existing set for the same config, then insert fresh.
+            existing = await session.execute(
+                select(ChunkSetRecord).where(
+                    ChunkSetRecord.filename == request.filename,
+                    ChunkSetRecord.md_source == md_source,
+                    ChunkSetRecord.chunker_library == request.chunker_library,
+                    ChunkSetRecord.chunker_type == request.chunker_type,
+                    ChunkSetRecord.chunk_size == request.chunk_size,
+                    ChunkSetRecord.chunk_overlap == request.chunk_overlap,
+                    ChunkSetRecord.enable_markdown_sizing == request.enable_markdown_sizing,
+                )
+            )
+            existing_set = existing.scalar_one_or_none()
+            if existing_set is not None:
+                # Cascade-delete old chunk rows, then reuse the set row.
+                await session.execute(
+                    delete(ChunkRecord).where(ChunkRecord.chunk_set_id == existing_set.id)
+                )
+                chunk_set = existing_set
+                chunk_set.total_chunks = len(normalised)
+                chunk_set.saved_at = __import__("datetime").datetime.now(
+                    tz=__import__("datetime").timezone.utc
+                )
+            else:
+                chunk_set = ChunkSetRecord(
+                    filename=request.filename,
+                    md_source=md_source,
+                    chunker_type=request.chunker_type,
+                    chunker_library=request.chunker_library,
+                    chunk_size=request.chunk_size,
+                    chunk_overlap=request.chunk_overlap,
+                    enable_markdown_sizing=request.enable_markdown_sizing,
+                    total_chunks=len(normalised),
+                )
+                session.add(chunk_set)
+
+            await session.flush()  # populate chunk_set.id
+
+            # Insert new chunk rows.
+            chunk_records = [
+                _chunk_item_to_record(c, chunk_set.id) for c in normalised
+            ]
+            session.add_all(chunk_records)
+            await session.commit()
+
+        _db_logger.info(
+            "DB: saved %d chunks for '%s' (lib=%s algo=%s)",
+            len(normalised), request.filename,
+            request.chunker_library, request.chunker_type,
+        )
+        return SaveChunksResponse(
+            success=True,
+            message=f"Saved {len(normalised)} chunks for '{request.filename}' to database",
+            path=f"db:chunk_sets/{chunk_set.id}",
+        )
+
+    async def _load_chunks_async(self, filename: str) -> LoadChunksResponse:
+        """Load the most recently saved chunk set for *filename* from the DB."""
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                select(ChunkSetRecord)
+                .where(ChunkSetRecord.filename == filename)
+                .order_by(ChunkSetRecord.saved_at.desc())
+                .limit(1)
+            )
+            chunk_set = result.scalar_one_or_none()
+            if chunk_set is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No saved chunks found for '{filename}'",
+                )
+            chunks_result = await session.execute(
+                select(ChunkRecord)
+                .where(ChunkRecord.chunk_set_id == chunk_set.id)
+                .order_by(ChunkRecord.index)
+            )
+            records = chunks_result.scalars().all()
+            return LoadChunksResponse(
+                chunks=[_record_to_chunk_dict(r) for r in records],
+                total_chunks=chunk_set.total_chunks,
+                filename=chunk_set.filename,
+            )
+
+    async def _load_chunks_by_id_async(
+        self, filename: str, chunk_set_id: int
+    ) -> LoadChunksResponse:
+        async with get_session_factory()() as session:
+            chunk_set = await session.get(ChunkSetRecord, chunk_set_id)
+            if chunk_set is None or chunk_set.filename != filename:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Chunk set id={chunk_set_id} not found for '{filename}'",
+                )
+            chunks_result = await session.execute(
+                select(ChunkRecord)
+                .where(ChunkRecord.chunk_set_id == chunk_set_id)
+                .order_by(ChunkRecord.index)
+            )
+            records = chunks_result.scalars().all()
+            return LoadChunksResponse(
+                chunks=[_record_to_chunk_dict(r) for r in records],
+                total_chunks=chunk_set.total_chunks,
+                filename=chunk_set.filename,
+            )
+
+    async def _list_versions_async(self, filename: str) -> list[ChunksVersion]:
+        async with get_session_factory()() as session:
+            result = await session.execute(
+                select(ChunkSetRecord)
+                .where(ChunkSetRecord.filename == filename)
+                .order_by(ChunkSetRecord.saved_at.desc())
+            )
+            sets = result.scalars().all()
+
+        stem = _safe_stem(filename)
+        versions: list[ChunksVersion] = []
+        for s in sets:
+            versions.append(ChunksVersion(
+                # Use "db:<id>" as a stable opaque filename so the router's
+                # /chunks/{chunks_filename} endpoint can round-trip.
+                filename=f"db:{s.id}",
+                md_filename=_md_filename_for_source(stem, s.md_source),
+                md_source=s.md_source,
+                library=s.chunker_library or "unknown",
+                algorithm=s.chunker_type or "unknown",
+                chunk_size=s.chunk_size,
+                chunk_overlap=s.chunk_overlap,
+                file_path=f"db:chunk_sets/{s.id}",
+            ))
+        return versions
+
+    # ------------------------------------------------------------------
+    # Public async API — called directly by the router (no to_thread wrapper)
+    # ------------------------------------------------------------------
+
+    async def save_chunks(self, request: SaveChunksRequest) -> SaveChunksResponse:  # type: ignore[override]
+        return await self._save_chunks_async(request)
+
+    async def load_chunks(self, filename: str) -> LoadChunksResponse:  # type: ignore[override]
+        return await self._load_chunks_async(filename)
+
+    async def load_chunks_by_filename(  # type: ignore[override]
+        self, filename: str, chunks_filename: str
+    ) -> LoadChunksResponse:
+        # chunks_filename is "db:<id>" for DB-backed sets.
+        if chunks_filename.startswith("db:"):
+            try:
+                chunk_set_id = int(chunks_filename[3:])
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid db chunk filename: {chunks_filename}",
+                )
+            return await self._load_chunks_by_id_async(filename, chunk_set_id)
+        # Fallback: treat as a local-file lookup (migration compatibility).
+        local = ChunkStorageService()
+        return local.load_chunks_by_filename(filename, chunks_filename)
+
+    async def list_versions(self, filename: str) -> list[ChunksVersion]:  # type: ignore[override]
+        return await self._list_versions_async(filename)
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+
+def get_chunk_storage() -> "ChunkStorageService | DatabaseChunkStorageService":
+    """Return the active storage service based on STORAGE_BACKEND config.
+
+    ``STORAGE_BACKEND=db``    → :class:`DatabaseChunkStorageService` (default)
+    ``STORAGE_BACKEND=local`` → :class:`ChunkStorageService` (file-based)
+    """
+    backend = get_settings().STORAGE_BACKEND.lower()
+    if backend == "local":
+        return ChunkStorageService()
+    return DatabaseChunkStorageService()
+

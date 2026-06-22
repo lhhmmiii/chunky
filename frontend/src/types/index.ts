@@ -138,6 +138,7 @@ export interface ChunkSettings {
   cloud?: CloudSettings
   sectionEnrichment?: EnrichmentSettings
   chunkEnrichment?: EnrichmentSettings
+  parentChunkSize?: number | null
 }
 
 // ---------------------------------------------------------------------------

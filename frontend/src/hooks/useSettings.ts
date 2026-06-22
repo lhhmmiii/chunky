@@ -150,6 +150,7 @@ export const DEFAULT_SETTINGS: ChunkSettings = {
     temperature: DEFAULT_ENRICHMENT_TEMPERATURE,
     user_prompt: DEFAULT_CHUNK_PROMPT,
   },
+  parentChunkSize: null,
 }
 
 export const DEFAULT_SPLIT_PCT = 50

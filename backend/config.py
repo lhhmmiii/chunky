@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     MDS_DIR: str = "docs/mds"
     CHUNKS_DIR: str = "docs/chunks"
 
+    # ── Database ───────────────────────────────────────────────
+    DATABASE_URL: str = "postgresql+asyncpg://admin:admin123@localhost:5432/parent"
+    """Async SQLAlchemy connection URL for PostgreSQL.
+    Override via the DATABASE_URL environment variable."""
+
+    STORAGE_BACKEND: str = "db"
+    """Where to persist chunk sets: 'db' (PostgreSQL) or 'local' (JSON files).
+    Default is 'db'. Set to 'local' to fall back to the original file-based storage."""
+
     # ── Logging ────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
     """Python log-level name: DEBUG, INFO, WARNING, ERROR, CRITICAL."""

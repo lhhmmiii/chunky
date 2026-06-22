@@ -33,6 +33,7 @@ export async function saveChunks(payload: SaveChunksPayload): Promise<string> {
       chunk_size: payload.settings.chunkSize,
       chunk_overlap: payload.settings.chunkOverlap,
       enable_markdown_sizing: payload.settings.enableMarkdownSizing,
+      parent_chunk_size: payload.settings.parentChunkSize,
       chunks: payload.chunks.map(serialiseChunk),
     }),
   })
@@ -96,6 +97,7 @@ export async function chunkSse(
     chunk_size: s.chunkSize,
     chunk_overlap: s.chunkOverlap,
     enable_markdown_sizing: s.enableMarkdownSizing,
+    parent_chunk_size: s.parentChunkSize,
   }
   // md_filename is only meaningful for a single-document request — the
   // backend ignores it for batch /chunk calls.

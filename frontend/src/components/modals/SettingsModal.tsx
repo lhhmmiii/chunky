@@ -332,6 +332,27 @@ export default function SettingsModal({ isOpen, onClose, onSave, current }: Prop
                     </div>
                   </div>
 
+                  {settings.chunkerType === 'parent_child' && (
+                    <div className="form-group">
+                      <label>Parent Chunk Size <span className="label-hint">(chars, defaults to 3× chunk size if empty)</span></label>
+                      <input
+                        type="number"
+                        value={settings.parentChunkSize ?? ''}
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (val === '') {
+                            set('parentChunkSize', null)
+                          } else {
+                            const v = parseInt(val, 10);
+                            if (!isNaN(v)) set('parentChunkSize', v)
+                          }
+                        }}
+                        placeholder="e.g. 1536"
+                        min={100} max={30000} step={100}
+                      />
+                    </div>
+                  )}
+
                   {isSizeDisabled && (
                     <small className="size-hint">Enable sizing above to set chunk size and overlap.</small>
                   )}

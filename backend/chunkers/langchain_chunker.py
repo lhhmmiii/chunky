@@ -176,6 +176,79 @@ class LangChainChunker(TextChunker):
             chunk.metadata = doc.metadata
         return chunks
 
+    @register_chunker(
+        library=_LIB, library_label=_LIB_LABEL,
+        strategy="parent_child", label="Parent-Child",
+        description=(
+            "Two-level split: text is first divided into large parent chunks "
+            "(parent_chunk_size, default 3× chunk_size), then each parent is "
+            "sub-split into smaller child chunks (chunk_size). Each child carries "
+            "parent_id and parent_content as metadata for retrieval context."
+        ),
+    )
+    def _split_parent_child(self, request: ChunkRequest) -> list[ChunkItem]:
+        """Two-level parent-child split.
+
+        Phase 1 — split the full text into parent chunks at ``parent_chunk_size``
+        (defaults to 3× ``chunk_size`` when not set on the request).
+
+        Phase 2 — split each parent chunk into child chunks at ``chunk_size``
+        using the same overlap as the request.
+
+        Every returned :class:`ChunkItem` represents a **child** chunk and has
+        its ``parent_id`` and ``parent_content`` populated.
+        """
+        parent_size = request.parent_chunk_size or (request.chunk_size * 3)
+
+        parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=parent_size,
+            chunk_overlap=0,  # parents do not overlap each other
+        )
+        child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=request.chunk_size,
+            chunk_overlap=request.chunk_overlap,
+        )
+
+        parent_splits = parent_splitter.split_text(request.content)
+
+        all_children: list[ChunkItem] = []
+        global_child_index = 0
+
+        for parent_id, parent_text in enumerate(parent_splits):
+            child_splits = child_splitter.split_text(parent_text)
+
+            # Map child text fragments back to character positions *within the
+            # parent text* first, then add the parent's own offset in the
+            # original document.
+            parent_start = request.content.find(parent_text)
+            if parent_start == -1:
+                parent_start = 0
+
+            child_search_start = 0
+            for child_text in child_splits:
+                # Find the child's position inside the parent text.
+                pos_in_parent = parent_text.find(child_text, child_search_start)
+                if pos_in_parent == -1:
+                    pos_in_parent = child_search_start
+                child_start = parent_start + pos_in_parent
+                child_end = child_start + len(child_text)
+                child_search_start = max(0, pos_in_parent + len(child_text) - request.chunk_overlap)
+
+                all_children.append(
+                    ChunkItem(
+                        index=global_child_index,
+                        content=child_text,
+                        start=child_start,
+                        end=child_end,
+                        parent_id=parent_id,
+                        parent_content=parent_text,
+                        metadata={"parent_id": parent_id},
+                    )
+                )
+                global_child_index += 1
+
+        return all_children
+
     # ------------------------------------------------------------------
     # Dispatch table
     # ------------------------------------------------------------------
@@ -185,4 +258,5 @@ class LangChainChunker(TextChunker):
         ChunkerType.recursive: _split_recursive,
         ChunkerType.character: _split_character,
         ChunkerType.markdown: _split_markdown,
+        ChunkerType.parent_child: _split_parent_child,
     }

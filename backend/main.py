@@ -80,6 +80,24 @@ async def lifespan(app: FastAPI):
     # teardown can clean them up even if their worker processes were already killed.
     app.state.retired_executors: list = []
 
+    # Initialise database tables when using the DB storage backend.
+    # Import is intentionally deferred so worker processes that fork before
+    # the lifespan runs never create a DB connection.
+    if settings.STORAGE_BACKEND.lower() == "db":
+        import logging as _log
+        _db_log = _log.getLogger(__name__)
+        try:
+            from backend.db import get_engine, Base
+            import backend.models.chunk_models  # noqa: F401 — register ORM models
+            async with get_engine().begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            _db_log.info("Database tables ensured (STORAGE_BACKEND=db)")
+        except Exception as _exc:
+            _db_log.warning(
+                "Could not initialise database tables — chunk DB storage may fail. "
+                "Ensure Postgres is running and DATABASE_URL is correct. Error: %s", _exc
+            )
+
     yield
 
     await app.state.http_client_async.aclose()

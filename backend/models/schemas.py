@@ -33,6 +33,9 @@ class ChunkerType(str, Enum):
     Strategies shared by both LangChain and Chonkie:
         token, recursive, character, markdown
 
+    LangChain-only strategies:
+        parent_child → ParentChildChunker (splits into parent then child chunks)
+
     Chonkie-only strategies:
         sentence   → SentenceChunker
         fast       → FastChunker
@@ -50,9 +53,10 @@ class ChunkerType(str, Enum):
     token = "token"
     recursive = "recursive"
 
-    #LangChain-only
+    # LangChain-only
     markdown = "markdown"
     character = "character"
+    parent_child = "parent_child"
 
     # Chonkie-only
     sentence = "sentence"
@@ -194,6 +198,15 @@ class ChunkRequest(BaseModel):
     chunk_size: int = Field(default_factory=lambda: _get_settings().DEFAULT_CHUNK_SIZE, gt=0)
     chunk_overlap: int = Field(default_factory=lambda: _get_settings().DEFAULT_CHUNK_OVERLAP, ge=0)
     enable_markdown_sizing: bool = Field(default=False)
+    parent_chunk_size: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Used only when chunker_type == 'parent_child'. Size of the parent "
+            "chunks (in characters). Child chunks are then split from each parent "
+            "at chunk_size. When None, defaults to 3× chunk_size."
+        ),
+    )
 
     @field_validator("chunk_overlap")
     @classmethod
@@ -233,6 +246,15 @@ class ChunkFilesRequest(BaseModel):
             "to cap each section at chunk_size characters."
         ),
     )
+    parent_chunk_size: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Used only when chunker_type == 'parent_child'. Size of the parent "
+            "chunks (in characters). Child chunks are then split from each parent "
+            "at chunk_size. When None, defaults to 3× chunk_size."
+        ),
+    )
 
     @field_validator("chunk_overlap")
     @classmethod
@@ -260,6 +282,15 @@ class ChunkItem(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     start: int = 0
     end: int = 0
+    # Parent-child chunking fields (populated when chunker_type == 'parent_child')
+    parent_id: int | None = Field(
+        default=None,
+        description="Index of the parent chunk this child was split from.",
+    )
+    parent_content: str = Field(
+        default="",
+        description="Full text of the parent chunk, for retrieval context.",
+    )
 
 
 class ChunkResponse(BaseModel):
@@ -289,6 +320,7 @@ class SaveChunksRequest(BaseModel):
     chunk_size: int | None = Field(default=None)
     chunk_overlap: int | None = Field(default=None)
     enable_markdown_sizing: bool = Field(default=False)
+    parent_chunk_size: int | None = Field(default=None)
 
 
 class SaveChunksResponse(BaseModel):

@@ -49,7 +49,7 @@ from backend.models.schemas import (
     SaveChunksRequest,
     SaveChunksResponse,
 )
-from backend.services.chunk_storage_service import ChunkStorageService
+from backend.services.chunk_storage_service import get_chunk_storage
 from backend.services.chunking_service import _init_chunk_worker, chunk_file_in_process
 from backend.utils.executor import cancel_cpu_executor
 from backend.utils.sse import (
@@ -58,7 +58,7 @@ from backend.utils.sse import (
 )
 
 router = APIRouter(prefix="/api", tags=["chunks"])
-_storage = ChunkStorageService()
+_storage = get_chunk_storage()
 
 
 @router.post("/chunk")
@@ -87,6 +87,7 @@ async def chunk_documents(http_request: Request, request: ChunkFilesRequest):
             "chunk_size": request.chunk_size,
             "chunk_overlap": request.chunk_overlap,
             "enable_markdown_sizing": request.enable_markdown_sizing,
+            "parent_chunk_size": request.parent_chunk_size,
             # Worker-only transport key — chunking_service strips it before
             # forwarding to ChunkRequest.  Only meaningful for single-file
             # requests; harmless when None.
@@ -235,14 +236,22 @@ async def chunk_documents(http_request: Request, request: ChunkFilesRequest):
 
 @router.post("/chunks/save", response_model=SaveChunksResponse)
 async def save_chunks(request: SaveChunksRequest):
-    """Persist a chunk set to a timestamped JSON file on disk."""
-    return await asyncio.to_thread(_storage.save_chunks, request)
+    """Persist a chunk set (to DB or disk depending on STORAGE_BACKEND)."""
+    import inspect
+    fn = _storage.save_chunks
+    if inspect.iscoroutinefunction(fn):
+        return await fn(request)
+    return await asyncio.to_thread(fn, request)
 
 
 @router.get("/chunks/load/{filename}", response_model=LoadChunksResponse)
 async def load_chunks(filename: str):
     """Load the most recently saved chunk set for a document."""
-    return await asyncio.to_thread(_storage.load_chunks, filename)
+    import inspect
+    fn = _storage.load_chunks
+    if inspect.iscoroutinefunction(fn):
+        return await fn(filename)
+    return await asyncio.to_thread(fn, filename)
 
 
 @router.get(
@@ -250,14 +259,13 @@ async def load_chunks(filename: str):
     response_model=ChunksVersionsResponse,
 )
 async def list_chunks_versions(document_name: str):
-    """Return every saved chunks JSON file for a document, newest first.
-
-    Each entry has its ``algorithm`` and ``timestamp`` parsed from the
-    filename so the frontend can render a human-readable picker.  Legacy
-    files that pre-date the new naming scheme appear with
-    ``algorithm = "unknown"``.
-    """
-    versions = await asyncio.to_thread(_storage.list_versions, document_name)
+    """Return every saved chunk configuration for a document, newest first."""
+    import inspect
+    fn = _storage.list_versions
+    if inspect.iscoroutinefunction(fn):
+        versions = await fn(document_name)
+    else:
+        versions = await asyncio.to_thread(fn, document_name)
     return ChunksVersionsResponse(document_name=document_name, versions=versions)
 
 
@@ -266,7 +274,9 @@ async def list_chunks_versions(document_name: str):
     response_model=LoadChunksResponse,
 )
 async def load_chunks_version(document_name: str, chunks_filename: str):
-    """Load one specific saved-chunks file by filename."""
-    return await asyncio.to_thread(
-        _storage.load_chunks_by_filename, document_name, chunks_filename,
-    )
+    """Load one specific saved-chunks file/record by its identifier."""
+    import inspect
+    fn = _storage.load_chunks_by_filename
+    if inspect.iscoroutinefunction(fn):
+        return await fn(document_name, chunks_filename)
+    return await asyncio.to_thread(fn, document_name, chunks_filename)
