@@ -16,6 +16,8 @@ export interface Chunk {
   metadata: Record<string, unknown>
   start: number
   end: number
+  parent_id?: number | null
+  parent_content?: string
 }
 
 export interface DocumentData {

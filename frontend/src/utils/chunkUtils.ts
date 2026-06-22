@@ -96,6 +96,8 @@ export function normaliseChunk(raw: Partial<Chunk> & { index: number; content: s
     metadata: asRecord(raw.metadata),
     start: asNumber(raw.start),
     end: asNumber(raw.end),
+    parent_id: raw.parent_id !== undefined && raw.parent_id !== null ? asNumber(raw.parent_id) : null,
+    parent_content: raw.parent_content !== undefined && raw.parent_content !== null ? asString(raw.parent_content) : '',
   }
 }
 
@@ -158,5 +160,7 @@ export function serialiseChunk(c: Chunk): Record<string, unknown> {
     metadata: c.metadata ?? {},
     start: c.start,
     end: c.end,
+    parent_id: c.parent_id,
+    parent_content: c.parent_content,
   }
 }
