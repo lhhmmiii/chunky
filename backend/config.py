@@ -227,14 +227,20 @@ class Settings(BaseSettings):
     """Optional prefix prepended to every Qdrant collection name so Chunky
     collections stay identifiable in a shared Qdrant instance."""
 
-    # ── Embedder ───────────────────────────────────────────────────
-    VECTOR_STORE_EMBEDDING_MODEL: str = "AITeamVN/Vietnamese_Embedding"
-    """model2vec model ID used for local embeddings.  The model is downloaded
-    on first use and cached by the HuggingFace hub."""
-    
-    VECTOR_STORE_EMBEDDING_BATCH_SIZE: int = 64
-    """Number of texts to embed per model2vec batch call."""
+    # ── Vector Store Models ────────────────────────────────────────
+    VECTORSTORE_DENSE_MODEL: str = "AITeamVN/Vietnamese_Embedding"
+    """langchain_huggingface model ID used for local dense embeddings."""
 
+    VECTORSTORE_SPARSE_MODEL: str = "Qdrant/bm25"
+    """langchain_qdrant sparse model ID used for local sparse embeddings."""
+
+    SPARSE_VECTOR_NAME: str = "sparse_vector"
+    """The key name for the sparse vector inside Qdrant collection config."""
+
+    # ── Embedder ───────────────────────────────────────────────────
+    VECTORSTORE_DENSE_MODEL: str = "AITeamVN/Vietnamese_Embedding"
+    VECTORSTORE_SPARSE_MODEL: str = "Qdrant/bm25"
+    
 @lru_cache
 def get_settings() -> Settings:
     """Return the cached Settings singleton."""
