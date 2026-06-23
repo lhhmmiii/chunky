@@ -117,26 +117,7 @@
   transform: none;
 }
 
-/* ── Semantic Search — teal palette ── */
-.md-action-btn.search-chunks {
-  background: white;
-  border: 1.5px solid rgba(13, 148, 136, 0.35);
-  color: #0D9488;
-  box-shadow: 0 1px 4px rgba(13, 148, 136, 0.12);
-}
 
-.md-action-btn.search-chunks:hover:not(:disabled) {
-  background: linear-gradient(135deg, #0D9488 0%, #14B8A6 100%);
-  border-color: transparent;
-  color: white;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.35);
-}
-
-.md-action-btn.search-chunks:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* ── Chunk blocks ── */
 .chunk-block {

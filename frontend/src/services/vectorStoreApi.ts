@@ -1,4 +1,4 @@
-import type { VectorStoreCollection, VectorSearchHit, IndexResult } from '../types'
+import type { VectorStoreCollection, IndexResult } from '../types'
 import { API_BASE } from './apiService'
 
 /**
@@ -49,36 +49,4 @@ export async function deleteCollection(name: string): Promise<void> {
     const detail = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
     throw new Error(detail?.detail ?? `HTTP ${res.status}`)
   }
-}
-
-/**
- * Semantic search within a Qdrant collection.
- *
- * @param collection     Target collection name.
- * @param query          Natural-language query string.
- * @param topK           Maximum number of results (default 5, max 50).
- * @param scoreThreshold Minimum cosine similarity score 0–1 (optional).
- */
-export async function searchChunks(
-  collection: string,
-  query: string,
-  topK = 5,
-  scoreThreshold?: number,
-): Promise<VectorSearchHit[]> {
-  const res = await fetch(`${API_BASE}/vector-store/search`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query,
-      collection,
-      top_k: topK,
-      score_threshold: scoreThreshold ?? null,
-    }),
-  })
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
-    throw new Error(detail?.detail ?? `HTTP ${res.status}`)
-  }
-  const data = await res.json()
-  return (data.hits ?? []) as VectorSearchHit[]
 }

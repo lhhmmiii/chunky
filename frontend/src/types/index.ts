@@ -217,21 +217,6 @@ export interface VectorStoreCollection {
   vector_size: number
 }
 
-export interface VectorSearchHit {
-  score: number
-  chunk_index: number
-  content: string
-  cleaned_chunk: string
-  title: string
-  context: string
-  summary: string
-  keywords: string[]
-  questions: string[]
-  parent_content: string
-  metadata: Record<string, unknown>
-  filename: string
-  collection: string
-}
 
 export interface IndexResult {
   success: boolean

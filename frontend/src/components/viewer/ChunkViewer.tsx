@@ -49,9 +49,7 @@ interface Props {
   onIndexChunks?: () => void
   /** True while an embed-and-index operation is running. */
   indexing?: boolean
-  /** Open the semantic-search modal. */
-  onOpenSearch?: () => void
-  /** When false, the Embed \u0026 Index and Search buttons are hidden. */
+  /** When false, the Embed \u0026 Index button is hidden. */
   vectorStoreEnabled?: boolean
 }
 
@@ -110,7 +108,6 @@ function ChunkViewer({
   onEnrichError,
   onIndexChunks,
   indexing = false,
-  onOpenSearch,
   vectorStoreEnabled = false,
 }: Props) {
   const [selectedChunks, setSelectedChunks] = useState<Set<number>>(new Set())
@@ -312,25 +309,15 @@ function ChunkViewer({
         </div>
         <div className="md-controls-right">
           {vectorStoreEnabled && (
-            <>
-              <button
-                className="md-action-btn search-chunks"
-                onClick={onOpenSearch}
-                disabled={!onOpenSearch}
-                title="Semantic search across indexed chunks"
-              >
-                🔍 Search
-              </button>
-              <button
-                className="md-action-btn index-chunks"
-                onClick={onIndexChunks}
-                disabled={!chunksReady || indexing || chunking}
-                title="Embed chunks and index into vector store"
-              >
-                <span>{indexing ? '⏳' : '⚡'}</span>
-                {indexing ? 'Indexing…' : 'Embed & Index'}
-              </button>
-            </>
+            <button
+              className="md-action-btn index-chunks"
+              onClick={onIndexChunks}
+              disabled={!chunksReady || indexing || chunking}
+              title="Embed chunks and index into vector store"
+            >
+              <span>{indexing ? '⏳' : '⚡'}</span>
+              {indexing ? 'Indexing…' : 'Embed & Index'}
+            </button>
           )}
           <button
             className="md-action-btn rechunk"

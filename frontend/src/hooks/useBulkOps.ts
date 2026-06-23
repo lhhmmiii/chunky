@@ -14,7 +14,6 @@ import {
   loadSavedChunksFile,
   saveChunks as saveChunksApi,
 } from '../services/chunksApi'
-import { CONNECTION_LOST_MSG } from '../utils/parseSse'
 import { isChunksVersionForSettings, missingEnrichmentModelError } from '../utils/chunkUtils'
 
 /**
