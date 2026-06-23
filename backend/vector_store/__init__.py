@@ -9,7 +9,6 @@ Public API
     Embedder
 """
 
-from backend.vector_store.embedder import Embedder
-from backend.vector_store.qdrant_store import QdrantVectorStore
+from backend.vector_store.qdrant_store import VectorDbManager 
 
-__all__ = ["Embedder", "QdrantVectorStore"]
+__all__ = ["VectorDbManager"]

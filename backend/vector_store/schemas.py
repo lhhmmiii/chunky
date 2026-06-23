@@ -69,45 +69,4 @@ class DeleteCollectionResponse(BaseModel):
     message: str
 
 
-# ---------------------------------------------------------------------------
-# Search
-# ---------------------------------------------------------------------------
 
-
-class SearchRequest(BaseModel):
-    """Body for ``POST /api/vector-store/search``."""
-
-    query: str = Field(..., min_length=1, description="Natural-language query.")
-    collection: str = Field(..., description="Qdrant collection name to search.")
-    top_k: int = Field(default=5, ge=1, le=50, description="Number of results to return.")
-    score_threshold: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="Minimum cosine similarity score (0–1). Results below this are dropped.",
-    )
-
-
-class SearchHit(BaseModel):
-    """A single search result returned by the semantic search endpoint."""
-
-    score: float
-    chunk_index: int
-    content: str
-    cleaned_chunk: str
-    title: str
-    context: str
-    summary: str
-    keywords: list[str]
-    questions: list[str]
-    parent_content: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    # Source document info stored in the point payload
-    filename: str = ""
-    collection: str = ""
-
-
-class SearchResponse(BaseModel):
-    query: str
-    collection: str
-    hits: list[SearchHit]

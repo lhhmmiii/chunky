@@ -7,52 +7,39 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import re
 from fastapi import HTTPException
 
 from backend.config import get_settings
-from backend.vector_store.embedder import Embedder
-from backend.vector_store.qdrant_store import QdrantVectorStore, collection_name_for
+from backend.vector_store.qdrant_store import VectorDbManager
 from backend.vector_store.schemas import (
     CollectionInfo,
     CollectionsResponse,
     DeleteCollectionResponse,
     IndexRequest,
     IndexResponse,
-    SearchRequest,
-    SearchResponse,
-    SearchHit,
 )
 from backend.services.chunk_storage_service import get_chunk_storage
 
 logger = logging.getLogger(__name__)
-
-
-def _pick_embed_text(chunk: dict) -> str:
-    """Return the best text to embed for a chunk.
-
-    Prefers ``cleaned_chunk`` (post-enrichment) when non-empty, otherwise
-    falls back to ``content`` (raw chunked text).
-    """
-    cleaned = (chunk.get("cleaned_chunk") or "").strip()
-    return cleaned if cleaned else (chunk.get("content") or "").strip()
-
 
 class VectorStoreService:
     """Handles all vector-store level operations: indexing chunks, listing collections,
     deleting collections, and semantic search.
     """
 
+    _vector_db_manager = VectorDbManager()
+
     def __init__(self) -> None:
-        self._embedder = Embedder()
-        self._store = QdrantVectorStore()
+        pass
 
     async def index_chunks(self, request: IndexRequest) -> IndexResponse:
         """Embed a saved chunk set and upsert into Qdrant.
 
         1. Loads the chunk set via the active storage backend.
-        2. Embeds each chunk (``cleaned_chunk`` → ``content`` fallback).
-        3. Derives a deterministic collection name (or uses the user-supplied one).
-        4. Creates/recreates the Qdrant collection and upserts all points.
+        2. Derives a deterministic collection name (or uses the user-supplied one).
+        3. Creates/validates the Qdrant collection.
+        4. Upserts all points via QdrantVectorStore.add_texts (handles embedding internally).
         """
         # 1. Load chunk set
         storage = get_chunk_storage()
@@ -127,103 +114,110 @@ class VectorStoreService:
             prefix=settings.VECTOR_STORE_COLLECTION_PREFIX,
         )
 
-        # 4. Embed
-        logger.info(
-            "Embedding %d chunks for collection '%s' …", len(texts), col_name
-        )
-        vectors: list[list[float]] = await asyncio.to_thread(self._embedder.embed, texts)
+        # 4. Create (or validate) the collection
+        await asyncio.to_thread(self._vector_db_manager.create_collection, col_name)
 
-        # 5. Index into Qdrant (IO-bound — run in thread pool)
-        indexed = await asyncio.to_thread(
-            self._store.index_chunks, chunks, vectors, col_name, request.filename
-        )
+        # 5. Get QdrantVectorStore for this collection and upsert texts
+        store = await asyncio.to_thread(self._vector_db_manager.get_collection, col_name)
+
+        metadatas = [
+            {
+                "source": request.filename,
+                "chunk_index": i,
+                **(chunk if isinstance(chunk, dict) else {}),
+            }
+            for i, chunk in enumerate(chunks)
+        ]
+
+        logger.info("Indexing %d chunks into collection '%s' …", len(texts), col_name)
+        ids = await asyncio.to_thread(store.add_texts, texts, metadatas)
+
+        indexed = len(ids)
+        vector_dim = await asyncio.to_thread(self._vector_db_manager._dense_vector_size)
 
         return IndexResponse(
             success=True,
             collection=col_name,
             indexed_count=indexed,
-            vector_dim=len(vectors[0]),
+            vector_dim=vector_dim,
             message=(
                 f"Indexed {indexed} chunk(s) from '{request.filename}' "
                 f"into collection '{col_name}'."
             ),
         )
 
-    async def list_collections(self) -> CollectionsResponse:
-        """Return all Qdrant collections whose names start with the configured prefix."""
-        settings = get_settings()
-        prefix = settings.VECTOR_STORE_COLLECTION_PREFIX
-
-        raw = await asyncio.to_thread(self._store.list_collections, prefix)
-        return CollectionsResponse(
-            collections=[
-                CollectionInfo(
-                    name=c["name"],
-                    points_count=c["points_count"],
-                    vector_size=c["vector_size"],
-                )
-                for c in raw
-            ]
-        )
-
     async def delete_collection(self, collection: str) -> DeleteCollectionResponse:
         """Delete a named Qdrant collection."""
-        ok = await asyncio.to_thread(self._store.delete_collection, collection)
-        if not ok:
+        try:
+            await asyncio.to_thread(self._vector_db_manager.delete_collection, collection)
+        except RuntimeError as exc:
             raise HTTPException(
                 status_code=404,
                 detail=f"Collection '{collection}' not found or could not be deleted.",
-            )
+            ) from exc
         return DeleteCollectionResponse(
             success=True,
             collection=collection,
             message=f"Collection '{collection}' deleted.",
         )
 
-    async def search_chunks(self, request: SearchRequest) -> SearchResponse:
-        """Semantic search within a Qdrant collection.
+# ---------------------------------------------------------------------------
+# Pick the cleaned chunk(if have) or raw chunk
+# ---------------------------------------------------------------------------
 
-        Embeds the query with the same model used for indexing, then runs ANN
-        search and returns the top-*k* results ordered by cosine similarity.
-        """
-        if not request.query.strip():
-            raise HTTPException(status_code=422, detail="Query must not be blank.")
+def _pick_embed_text(chunk: dict) -> str:
+    """Return the best text to embed for a chunk.
 
-        # Embed query
-        query_vector: list[float] = await asyncio.to_thread(
-            self._embedder.embed_query, request.query
-        )
+    Prefers ``cleaned_chunk`` (post-enrichment) when non-empty, otherwise
+    falls back to ``content`` (raw chunked text).
+    """
+    cleaned = (chunk.get("cleaned_chunk") or "").strip()
+    return cleaned if cleaned else (chunk.get("content") or "").strip()
 
-        # Search
-        raw_hits = await asyncio.to_thread(
-            self._store.search,
-            request.collection,
-            query_vector,
-            request.top_k,
-            request.score_threshold,
-        )
+# ---------------------------------------------------------------------------
+# Collection name helpers
+# ---------------------------------------------------------------------------
 
-        hits = [
-            SearchHit(
-                score=h["score"],
-                chunk_index=h["chunk_index"],
-                content=h["content"],
-                cleaned_chunk=h["cleaned_chunk"],
-                title=h["title"],
-                context=h["context"],
-                summary=h["summary"],
-                keywords=h["keywords"],
-                questions=h["questions"],
-                parent_content=h["parent_content"],
-                metadata=h["metadata"],
-                filename=h["filename"],
-                collection=h["collection"],
-            )
-            for h in raw_hits
-        ]
+_UNSAFE_RE = re.compile(r"[^a-zA-Z0-9_-]")
 
-        return SearchResponse(
-            query=request.query,
-            collection=request.collection,
-            hits=hits,
-        )
+
+def _safe_token(value: str, max_len: int = 40) -> str:
+    """Sanitise a string for use as part of a Qdrant collection name."""
+    sanitised = _UNSAFE_RE.sub("_", value.strip().lower())
+    return sanitised[:max_len]
+
+
+def collection_name_for(
+    filename: str,
+    md_source: str | None,
+    library: str | None,
+    algorithm: str | None,
+    chunk_size: int | None,
+    chunk_overlap: int | None,
+    prefix: str | None = None,
+) -> str:
+    """Build a deterministic Qdrant collection name.
+
+    Pattern::
+
+        {prefix}__{stem}__{md_source}__{library}-{algo}[__{size}[__{overlap}]]
+
+    where ``prefix`` defaults to ``VECTOR_STORE_COLLECTION_PREFIX``.
+    """
+    settings = get_settings()
+    _prefix = _safe_token(prefix or settings.VECTOR_STORE_COLLECTION_PREFIX)
+
+    # Strip extension from filename to get the document stem
+    stem = _safe_token(filename.rsplit(".", 1)[0] if "." in filename else filename)
+    _md = _safe_token(md_source or "uploaded")
+    _lib = _safe_token(library or "unknown")
+    _algo = _safe_token(algorithm or "unknown")
+    libalgo = f"{_lib}-{_algo}"
+
+    parts = [_prefix, stem, _md, libalgo]
+    if chunk_size is not None:
+        parts.append(str(int(chunk_size)))
+        if chunk_overlap is not None:
+            parts.append(str(int(chunk_overlap)))
+
+    return "__".join(parts)
